@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import CoreBluetooth
 
 struct DiscoveredAdapter: Identifiable, Equatable {
@@ -280,10 +281,10 @@ final class OBDSession: NSObject, ObservableObject {
     private func performReadCodes() async -> DTCReport? {
         do {
             let status = try await send("0101")
-            let statusData = ELMParser.mode01Data(status, pid: 0x01)
+            // Any ECU can turn on the check engine light, so check every reply.
+            let milOn = ELMParser.allMode01Data(status, pid: 0x01).contains { ($0.first ?? 0) & 0x80 != 0 }
             let stored = try await send("03", timeout: 4)
             let pendingReply = try await send("07", timeout: 4)
-            let milOn = ((statusData?.first ?? 0) & 0x80) != 0
             return DTCReport(milOn: milOn,
                              stored: ELMParser.troubleCodes(stored, responseByte: 0x43),
                              pending: ELMParser.troubleCodes(pendingReply, responseByte: 0x47),
@@ -405,6 +406,8 @@ final class OBDSession: NSObject, ObservableObject {
     }
 
     private func didDisconnect(_ p: CBPeripheral) {
+        // Ignore an old adapter dropping off after switching to a different one.
+        guard p.identifier == peripheral?.identifier else { return }
         let byUser = userDisconnected
         teardown(newState: byUser ? .idle : .connecting(adapterName ?? "adapter"))
         guard !byUser else { return }
