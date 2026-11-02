@@ -1,0 +1,6 @@
+# Xcode per-user files
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+.DS_Store

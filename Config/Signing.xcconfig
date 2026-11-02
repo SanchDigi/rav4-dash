@@ -1,0 +1,3 @@
+// Bundle ID for the app. It must be unique to your Apple account.
+// If Xcode says it's already taken, change "sanchdigi" to something else.
+APP_BUNDLE_ID = com.sanchdigi.rav4dash
