@@ -1,0 +1,106 @@
+name: Build
+
+# Builds the app on every push to check it compiles.
+# Uploads to TestFlight when run by hand (Actions tab → Build → Run workflow)
+# once the App Store Connect secrets below are added to the repository.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: "Upload to TestFlight"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project RAV4Dash.xcodeproj \
+            -scheme RAV4Dash \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO | tee build.log | grep -E "error:|warning: .*(isolat|Sendable)|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+  testflight:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.testflight
+    runs-on: macos-26
+    env:
+      KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets
+        run: |
+          for v in KEY_ID ISSUER_ID TEAM_ID; do
+            if [ -z "${!v}" ]; then echo "::error::Missing secret for $v. See README → TestFlight from GitHub."; exit 1; fi
+          done
+          if [ -z "${{ secrets.ASC_KEY_P8 }}" ]; then echo "::error::Missing secret ASC_KEY_P8"; exit 1; fi
+
+      - name: Save API key
+        run: |
+          mkdir -p ~/private_keys
+          echo "${{ secrets.ASC_KEY_P8 }}" > ~/private_keys/AuthKey_${KEY_ID}.p8
+
+      - name: Archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project RAV4Dash.xcodeproj \
+            -scheme RAV4Dash \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/RAV4Dash.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} | tail -40
+
+      - name: Upload to TestFlight
+        run: |
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>testFlightInternalTestingOnly</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          set -o pipefail
+          xcodebuild -exportArchive \
+            -archivePath build/RAV4Dash.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" | tail -40
