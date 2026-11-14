@@ -42,10 +42,11 @@ struct ConnectView: View {
                                 AdapterRow(adapter: adapter)
                             }
                         }
+                        Button("Search again") { obd.restartScan() }
                     } header: {
                         Text("Nearby Bluetooth devices")
                     } footer: {
-                        Text("Plug the Veepeak into the OBD-II port under the steering wheel and turn the RAV4 on (READY). Then tap the adapter here. You don't need to pair it in iPhone Settings.")
+                        Text("Seeing \(obd.devicesSeen) Bluetooth devices nearby.\n\nPlug the Veepeak into the OBD-II port under the steering wheel and turn the RAV4 on (READY). Then tap the adapter here. You don't need to pair it in iPhone Settings.\n\nNot listed? Unplug the adapter for 10 seconds and plug it back in. If it's under My Devices in iPhone Settings → Bluetooth, tap ⓘ → Forget This Device.")
                     }
                     .listRowBackground(Theme.panel)
                 }
@@ -151,10 +152,16 @@ struct AdapterRow: View {
                 }
             }
             Spacer()
-            SignalBars(rssi: adapter.rssi)
-            Text("\(adapter.rssi) dBm")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(Theme.label)
+            if adapter.alreadyConnected {
+                Text("Connected to iPhone")
+                    .font(.caption)
+                    .foregroundStyle(Theme.label)
+            } else {
+                SignalBars(rssi: adapter.rssi)
+                Text("\(adapter.rssi) dBm")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Theme.label)
+            }
         }
         .frame(minHeight: 44)
     }

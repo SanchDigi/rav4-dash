@@ -7,6 +7,8 @@ struct DiscoveredAdapter: Identifiable, Equatable {
     var name: String
     var rssi: Int
     var looksLikeOBD: Bool
+    /// Already connected to the iPhone (by iOS or another app), so it isn't advertising.
+    var alreadyConnected = false
 }
 
 enum OBDError: Error {
@@ -35,6 +37,8 @@ final class OBDSession: NSObject, ObservableObject {
 
     @Published private(set) var state: State = .idle
     @Published private(set) var adapters: [DiscoveredAdapter] = []
+    /// How many Bluetooth devices the phone has seen during this search (helps troubleshooting).
+    @Published private(set) var devicesSeen = 0
     @Published private(set) var adapterName: String?
     @Published private(set) var elmVersion: String?
     @Published private(set) var protocolName: String?
@@ -61,6 +65,7 @@ final class OBDSession: NSObject, ObservableObject {
     private var wantsScan = false
     private var userDisconnected = false
     private var initStarted = false
+    private var seenIDs = Set<UUID>()
 
     private static let savedKey = "obd.lastAdapter"
 
@@ -88,10 +93,30 @@ final class OBDSession: NSObject, ObservableObject {
         guard central.state == .poweredOn else { return }
         guard !central.isScanning else { return }
         adapters.removeAll()
+        seenIDs.removeAll()
+        devicesSeen = 0
         if case .idle = state { state = .scanning }
         if case .failed = state { state = .scanning }
+        addAlreadyConnectedAdapters()
         central.scanForPeripherals(withServices: nil,
                                    options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+    }
+
+    /// Stops and starts the search again from scratch.
+    func restartScan() {
+        if central.isScanning { central.stopScan() }
+        startScan()
+    }
+
+    /// An adapter that's still connected to the iPhone (for example, by iOS or another app)
+    /// stops advertising, so a normal search can't see it. Ask iOS for those directly.
+    private func addAlreadyConnectedAdapters() {
+        for p in central.retrieveConnectedPeripherals(withServices: Self.preferredServices) {
+            peripherals[p.identifier] = p
+            guard !adapters.contains(where: { $0.id == p.identifier }) else { continue }
+            adapters.insert(DiscoveredAdapter(id: p.identifier, name: p.name ?? "OBD adapter",
+                                              rssi: -50, looksLikeOBD: true, alreadyConnected: true), at: 0)
+        }
     }
 
     func stopScan() {
@@ -339,18 +364,26 @@ final class OBDSession: NSObject, ObservableObject {
         }
     }
 
-    private func discovered(_ p: CBPeripheral, name: String?, rssi: Int) {
-        guard let name, !name.isEmpty, rssi < 0 else { return }
+    private func discovered(_ p: CBPeripheral, name: String?, rssi: Int, services: [CBUUID]) {
+        guard rssi < 0 else { return }
+        if seenIDs.insert(p.identifier).inserted { devicesSeen = seenIDs.count }
+
+        let advertisesOBDService = services.contains { Self.preferredServices.contains($0) }
+        let trimmed = name?.trimmingCharacters(in: .whitespaces) ?? ""
+        // Unnamed devices are only shown if they advertise a known OBD adapter service.
+        guard !trimmed.isEmpty || advertisesOBDService else { return }
+        let displayName = trimmed.isEmpty ? "OBD adapter (no name)" : trimmed
+
         peripherals[p.identifier] = p
         if let i = adapters.firstIndex(where: { $0.id == p.identifier }) {
             adapters[i].rssi = rssi
-            adapters[i].name = name
+            adapters[i].name = displayName
             return
         }
-        let upper = name.uppercased()
-        let hints = ["OBD", "ELM", "VEEPEAK", "VLINK", "V-LINK", "CHECK", "VGATE", "SCAN"]
-        let looksLikeOBD = hints.contains { upper.contains($0) }
-        adapters.append(DiscoveredAdapter(id: p.identifier, name: name, rssi: rssi, looksLikeOBD: looksLikeOBD))
+        let upper = displayName.uppercased()
+        let hints = ["OBD", "ELM", "VEEPEAK", "VLINK", "V-LINK", "CHECK", "VGATE", "SCAN", "BLE"]
+        let looksLikeOBD = advertisesOBDService || hints.contains { upper.contains($0) }
+        adapters.append(DiscoveredAdapter(id: p.identifier, name: displayName, rssi: rssi, looksLikeOBD: looksLikeOBD))
         adapters.sort { ($0.looksLikeOBD ? 1 : 0, $0.rssi) > ($1.looksLikeOBD ? 1 : 0, $1.rssi) }
     }
 
@@ -425,7 +458,8 @@ extension OBDSession: CBCentralManagerDelegate, CBPeripheralDelegate {
                                     advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
         let rssi = RSSI.intValue
-        MainActor.assumeIsolated { self.discovered(peripheral, name: name, rssi: rssi) }
+        let services = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        MainActor.assumeIsolated { self.discovered(peripheral, name: name, rssi: rssi, services: services) }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
