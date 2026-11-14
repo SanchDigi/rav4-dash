@@ -82,6 +82,20 @@ Until then, the iPhone app works normally and CarPlay just doesn't list it.
 
 ---
 
+## TestFlight from GitHub (no Mac needed)
+
+GitHub builds the app on its own Macs every time code is pushed (the **Actions** tab shows the result). It can also upload the app to TestFlight. This needs a paid Apple Developer account and a one-time setup:
+
+1. **Create the app record.** In [App Store Connect](https://appstoreconnect.apple.com) go to **Apps → + → New App**. Choose iOS, name it "RAV4 Dash", and pick the bundle ID `com.sanchdigi.rav4dash`. For SKU, enter anything, like `rav4dash`.
+2. **Create an API key.** In App Store Connect go to **Users and Access → Integrations → App Store Connect API → Team Keys**. Click **+**, name it "GitHub", and set Access to **Admin**. Download the `.p8` file (you can only download it once). Note the **Key ID** and the **Issuer ID** shown at the top of the page.
+3. **Find your Team ID** at [developer.apple.com/account](https://developer.apple.com/account) under **Membership details**.
+4. **Add four secrets on GitHub.** In this repository go to **Settings → Secrets and variables → Actions → New repository secret**:
+   - `ASC_KEY_ID`: the Key ID
+   - `ASC_ISSUER_ID`: the Issuer ID
+   - `APPLE_TEAM_ID`: your Team ID
+   - `ASC_KEY_P8`: the whole contents of the `.p8` file, including the `BEGIN` and `END` lines. Open it in TextEdit to copy it.
+5. **Run it.** Go to the **Actions** tab → **Build** → **Run workflow**. After about 10 minutes the build appears in App Store Connect under **TestFlight**. Add yourself as an internal tester there, then install it with the TestFlight app on your iPhone.
+
 ## Updating
 
 When there's new code, run this in Terminal, then press ▶ in Xcode again:
